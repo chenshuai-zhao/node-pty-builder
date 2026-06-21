@@ -60,21 +60,31 @@ jobs:
             --arch=$(node -p "process.arch") \
             --dist-url=https://electronjs.org/headers
 
-      - name: Collect artifacts (pty.node + spawn-helper)
+      - name: Collect artifacts (pty.node[, spawn-helper])
         run: |
           cd build-work/node_modules/node-pty
           OUT="$GITHUB_WORKSPACE/output/${{ matrix.arch_name }}"
           mkdir -p "$OUT"
           echo "=== build/Release 目录内容 ==="
           ls -la build/Release/ || true
-          # 官方 node-pty 运行时 loadNativeModule 找 build/Release/pty.node + 同目录 spawn-helper
+
+          # pty.node —— Linux 必需且充分:pty.cc 中 spawn-helper 仅 __APPLE__ 分支使用,
+          # Linux 走 forkpty,不需要 spawn-helper(binding.gyp 也只给 mac 定义该 target)。
           cp -v build/Release/pty.node "$OUT/"
-          cp -v build/Release/spawn-helper "$OUT/"
-          chmod +x "$OUT/spawn-helper"
+
+          # spawn-helper:Linux 上不存在也不需要;若意外编出则一并带上,无害。
+          HELPER=$(find . -name spawn-helper -type f 2>/dev/null | head -1)
+          if [ -n "$HELPER" ]; then
+            cp -v "$HELPER" "$OUT/spawn-helper"
+            chmod +x "$OUT/spawn-helper"
+            echo "(附带了 spawn-helper)"
+          else
+            echo "(Linux 无需 spawn-helper —— 符合预期)"
+          fi
+
           echo "=== 验证产物 ==="
           ls -la "$OUT/"
           file "$OUT/pty.node"
-          file "$OUT/spawn-helper"
 
       - name: Verify artifacts (ELF + 类型)
         run: |
@@ -82,9 +92,8 @@ jobs:
           # 这些二进制是针对 Electron 38 (ABI 137) 编的，CI 的 Node 运行时不一定能 require，
           # 故只校验文件类型/存在性；真正的运行验证在「京智办」打包产物里做。
           test -f "$OUT/pty.node" || { echo "缺 pty.node"; exit 1; }
-          test -f "$OUT/spawn-helper" || { echo "缺 spawn-helper"; exit 1; }
           file "$OUT/pty.node" | grep -q "ELF" || { echo "pty.node 不是 ELF"; exit 1; }
-          echo "✅ pty.node + spawn-helper 均就位且为 Linux ELF"
+          echo "✅ pty.node 就位且为 Linux ELF（Linux 不需要 spawn-helper）"
 
       - name: Upload prebuild artifact
         uses: actions/upload-artifact@v4
